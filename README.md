@@ -15,3 +15,114 @@ IOU定义了两个bounding box的重叠度，如下图所示：
 ### 3,非极大值抑制NMS（non-maxmum suppression）
 因为一会儿讲RCNN算法，会从一张图片中找出n多个可能是物体的矩形框，然后为每个矩形框为做类别分类概率：  
 ![](https://github.com/bigbrother33/Deep-Learning/blob/master/photo/20160902124825831.png)  
+就像上面的图片一样，定位一个车辆，最后算法就找出了一堆的方框，我们需要判别哪些矩形框是没用的。非极大值抑制：先假设有6个矩形框，根据分类器类别分类概率做排序，从小到大分别属于车辆的概率分别为A、B、C、D、E、F。
+
+* (1)从最大概率矩形框F开始，分别判断A~E与F的重叠度IOU是否大于某个设定的阈值;
+
+* (2)假设B、D与F的重叠度超过阈值，那么就扔掉B、D；并标记第一个矩形框F，是我们保留下来的。
+
+* (3)从剩下的矩形框A、C、E中，选择概率最大的E，然后判断E与A、C的重叠度，重叠度大于一定的阈值，那么就扔掉；并标记E是我们保留下来的第二个矩形框。  
+
+就这样一直重复，找到所有被保留下来的矩形框。
+
+## 算法总体思路
+利用候选区域与 CNN 结合做目标定位
+借鉴了滑动窗口思想，R-CNN 采用对区域进行识别的方案。
+因此paper采用的方法是：首先输入一张图片，我们先定位出若干个物体候选框，然后采用CNN提取每个候选框中图片的特征向量，特征向量为全连接层去处顶层后的输出，接着采用svm算法对各个候选框中的物体进行分类识别。也就是总个过程分为三个程序：
+
+a、找出候选框；
+
+b、利用CNN提取特征向量；
+
+c、利用SVM进行特征向量分类；
+
+具体的流程如下图片所示：
+![](https://github.com/bigbrother33/Deep-Learning/blob/master/photo/20160902124834270.png)
+### 利用预训练与微调解决标注数据缺乏的问题
+采用在 ImageNet 上已经训练好的模型，然后在 PASCAL VOC 数据集上进行 fine-tune。
+因为 ImageNet 的图像高达几百万张，利用卷积神经网络充分学习浅层的特征，然后在小规模数据集做规模化训练，从而可以达到好的效果。
+现在，我们称之为迁移学习，是必不可少的一种技能。
+### 候选区域
+能够生成候选区域的方法很多，比如：
+* objectness
+* selective search
+* category-independen object proposals
+* constrained parametric min-cuts(CPMC)
+* multi-scale combinatorial grouping
+* Ciresan  
+R-CNN 采用的是 Selective Search 算法。这样我们便得到若干个`region proposals`,即候选框（注：原论文中生成2000个）
+### CNN特征提取
+R-CNN抽取了一个 4096 维的特征向量，采用的是Alexnet模型，原论文基于 Caffe 进行代码开发，本次复现基于TensorFlow。
+需要注意的是 Alextnet 的输入图像大小是 227x227。
+而通过 Selective Search 产生的候选区域大小不一，为了与 Alexnet 兼容，R-CNN 采用了非常暴力的手段，那就是无视候选区域的大小和形状，统一变换到 227\*227 的尺寸。
+#### 1,网络结构设计阶段
+网络架构我们有两个可选方案：第一选择经典的Alexnet；第二选择VGG16。经过测试Alexnet精度为58.5%，VGG16精度为66%。VGG这个模型的特点是选择比较小的卷积核、选择较小的跨步，这个网络的精度高，不过计算量是Alexnet的7倍。后面为了简单起见，我们就直接选用Alexnet，并进行讲解；Alexnet特征提取部分包含了5个卷积层、2个全连接层，在Alexnet中p5层神经元个数为9216、 fc_8、fc_10神经元个数都是4096，通过这个网络训练完毕后，最后提取特征每个输入候选框图片都能得到一个4096维的特征向量。代码如下：
+```python
+class Alexnet_Net :
+    '''
+    此类用来定义Alexnet网络及其参数，之后整体作为参数输入到Solver中
+    '''
+    def __init__(self, is_training=True, is_fineturn=False, is_SVM=False):
+        self.image_size = cfg.Image_size
+        self.batch_size = cfg.F_batch_size if is_fineturn else cfg.T_batch_size
+        self.class_num = cfg.F_class_num if is_fineturn else cfg.T_class_num
+        self.input_data = tf.placeholder(tf.float32,[None, self.image_size, self.image_size,3], name='input')
+        self.logits = self.build_network(self.input_data, self.class_num, is_svm=is_SVM, is_training=is_training)
+
+        if is_training == True :
+            self.label = tf.placeholder(tf.float32, [None, self.class_num], name='label')
+            self.loss_layer(self.logits, self.label)
+            self.accuracy = self.get_accuracy(self.logits, self.label)
+            self.total_loss = tf.losses.get_total_loss()
+            tf.summary.scalar('total_loss', self.total_loss)
+
+    def build_network(self, input, output, is_svm= False, scope='R-CNN',is_training=True, keep_prob=0.5):
+        with tf.variable_scope(scope):
+            with slim.arg_scope([slim.fully_connected, slim.conv2d],
+                                activation_fn=nn_ops.relu,
+                                weights_initializer=tf.truncated_normal_initializer(0.0, 0.01),
+                                weights_regularizer=slim.l2_regularizer(0.0005)):
+                net = slim.conv2d(input, 96, 11, stride=4, scope='conv_1')
+                net = slim.max_pool2d(net, 3, stride=2, scope='pool_2')
+                net = local_response_normalization(net)
+                net = slim.conv2d(net, 256, 5, scope='conv_3')
+                net = slim.max_pool2d(net, 3, stride=2, scope='pool_2')
+                net = local_response_normalization(net)
+                net = slim.conv2d(net, 384, 3, scope='conv_4')
+                net = slim.conv2d(net, 384, 3, scope='conv_5')
+                net = slim.conv2d(net, 256, 3, scope='conv_6')
+                net = slim.max_pool2d(net, 3, stride=2, scope='pool_7')
+                net = local_response_normalization(net)
+                net = slim.flatten(net, scope='flat_32')
+                net = slim.fully_connected(net, 4096, activation_fn=self.tanh(), scope='fc_8')
+                net = slim.dropout(net, keep_prob=keep_prob,is_training=is_training, scope='dropout9')
+                net = slim.fully_connected(net, 4096, activation_fn=self.tanh(), scope='fc_10')
+                if is_svm:
+                    return net
+                net = slim.dropout(net, keep_prob=keep_prob, is_training=is_training, scope='dropout11')
+                net = slim.fully_connected(net, output, activation_fn=self.softmax(), scope='fc_11')
+        return net
+
+    def loss_layer(self, y_pred, y_true):
+        with tf.name_scope("Crossentropy"):
+            y_pred = tf.clip_by_value(y_pred, tf.cast(1e-10, dtype=tf.float32),tf.cast(1. - 1e-10, dtype=tf.float32))  #tf.clip_by_value(A, min, max)：输入一个张量A，把A中的每一个元素的值都压缩在min和max之间。小于min的让它等于min，大于max的元素的值等于max。
+            cross_entropy = - tf.reduce_sum(y_true * tf.log(y_pred),reduction_indices=len(y_pred.get_shape()) - 1)
+            loss = tf.reduce_mean(cross_entropy)
+            tf.losses.add_loss(loss)
+            tf.summary.scalar('loss', loss)
+
+    def get_accuracy(self, y_pred, y_true):
+        y_pred_maxs =(tf.argmax(y_pred,1))
+        y_true_maxs =(tf.argmax(y_true,1))
+        num = tf.count_nonzero((y_true_maxs-y_pred_maxs))
+        result = 1-(num/self.batch_size)
+        return result
+    def softmax(self):
+        def op(inputs):
+            return tf.nn.softmax(inputs)
+        return op
+    def tanh(self):
+        def op(inputs):
+            return tf.tanh(inputs)
+        return op
+```
