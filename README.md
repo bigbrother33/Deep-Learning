@@ -11,4 +11,7 @@ IOU定义了两个bounding box的重叠度，如下图所示：
 
 ![](https://github.com/bigbrother33/Deep-Learning/blob/master/photo/20160902124815518.png)  
 矩形框A、B的一个重合度IOU计算公式为：<br>
-<a href="https://www.codecogs.com/eqnedit.php?latex=\dpi{100}&space;\LARGE&space;IOU=(A\cap&space;B)/(A\cup&space;B)" target="_blank"><img src="https://latex.codecogs.com/png.latex?\dpi{100}&space;\LARGE&space;IOU=(A\cap&space;B)/(A\cup&space;B)" title="\LARGE IOU=(A\cap B)/(A\cup B)" /></a><br>
+>>>>>>>>>>>><a href="https://www.codecogs.com/eqnedit.php?latex=\dpi{100}&space;\LARGE&space;IOU=(A\cap&space;B)/(A\cup&space;B)" target="_blank"><img src="https://latex.codecogs.com/png.latex?\dpi{100}&space;\LARGE&space;IOU=(A\cap&space;B)/(A\cup&space;B)" title="\LARGE IOU=(A\cap B)/(A\cup B)" /></a>  
+### 3,非极大值抑制NMS（non-maxmum suppression）
+因为一会儿讲RCNN算法，会从一张图片中找出n多个可能是物体的矩形框，然后为每个矩形框为做类别分类概率：  
+![](https://github.com/bigbrother33/Deep-Learning/blob/master/photo/20160902124825831.png)  
