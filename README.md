@@ -150,4 +150,26 @@ class Alexnet_Net :
                 self.saver.save(self.sess, self.ckpt_file, global_step=self.global_step)
 ```
 #### 3,fine-tuning阶段
-我们接着采用selective search 搜索出来的候选框，然后处理到指定大小图片，继续对上面预训练的cnn模型进行fine-tuning训练。假设要检测的物体类别有N类，那么我们就需要把上面预训练阶段的CNN模型的最后一层给替换掉，替换成N+1个输出的神经元(加1，表示还有一个背景)，然后这一层直接采用参数随机初始化的方法，其它网络层的参数不变；接着就可以开始继续SGD训练了。开始的时候，SGD学习率选择0.001，在每次训练的时候，我们batch size大小选择128，其中32个事正样本、96个事负样本（正负样本的定义前面已经提过，不再解释）。
+我们接着采用selective search 搜索出来的候选框。首先会逐步读入图片，然后采用seletive search 对读入的图片生成候选区域，再计算每个候选区域和ground truth(代码中的fine_turn_list)的交并比（IOU).当IOU大于阈值时，则认为是当前的候选区域属于正确类。并且将其标定为相应的类别(label)。这样每一个候选区域就会产生相应的label即（image, label). (image, label)就是Fineturn训练的训练集。然后处理到指定大小图片，继续对上面预训练的cnn模型进行fine-tuning训练。假设要检测的物体类别有N类，那么我们就需要把上面预训练阶段的CNN模型的最后一层给替换掉，替换成N+1个输出的神经元(加1，表示还有一个背景)，然后这一层直接采用参数随机初始化的方法，其它网络层的参数不变；接着就可以开始继续SGD训练了。开始的时候，SGD学习率选择0.001，在每次训练的时候，我们batch size大小选择128，其中32个事正样本、96个事负样本（正负样本的定义前面已经提过，不再解释）。
+### SVM训练
+首先会逐步读入图片，然后采用seletive search 对读入的图片生成候选区域，这时候会生成候选区域候选框的坐标信息， 再计算每个候选区域和ground truth(代码中的fine_turn_list)的交并比（IOU).当IOU大于阈值时，则认为是当前的候选区域属于正确类。并且将其标定为相应的类别(label)， 并将这个label对应的候选区域图（iamge）的候选框坐标信息与ground truth的位置信息作对比，保留相对位置(平移和缩放)信息保留下来（label_bbox），作为训练数据。这样整个训练数据则为（image, label, label_bbox）对。但是在训练SVM时并没有用到label_bbox信息。还只是用来分类。而且需要对每种类型都单独训练一个分类器， 并保存训练好的模型，备用。另外SVM分类器的输入是Alex网络softmax链接层之前的全连接层的输出结果。
+```Python
+class SVM :
+    def __init__(self, data):
+        self.data = data
+        self.data_save_path = cfg.SVM_and_Reg_save
+        self.output = cfg.Out_put
+    def train(self):
+        svms=[]
+        data_dirs = os.listdir(self.data_save_path)
+        for data_dir in data_dirs:
+            images, labels = self.data.get_SVM_data(data_dir)
+            clf = svm.LinearSVC()
+            clf.fit(images, labels)
+            svms.append(clf)
+            SVM_model_path = os.path.join(self.output, 'SVM_model')
+            if not os.path.exists(SVM_model_path):
+                os.makedirs(SVM_model_path)
+            joblib.dump(clf, os.path.join(SVM_model_path,  str(data_dir)+ '_svm.pkl'))
+```
+### bbox regression网络训练
