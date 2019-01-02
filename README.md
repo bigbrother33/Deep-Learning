@@ -1,5 +1,19 @@
 # RCNN论文复现
 R-CNN: Regions with Convolutional Neural Network Features
+# 工程内容
+算法基于tensorflow 1.12实现
+# 开发环境
+windows10+python3.6+tensorflow1.12+scikit-learning+cv2+tflearn  
+i7-6700+gtx1060  
+# 数据集
+由于设备所限，没有采用原论文中的imagenet数据集，采用较小的17flowers据集, 官网下载：http://www.robots.ox.ac.uk/~vgg/data/flowers/17/
+
+# 程序说明
+1、config.py---网络定义、训练与数据处理所需要用到的参数  
+2、Networks.py---用于定义Alexnet_Net模型、fineturn模型、SVM模型、边框回归模型   
+4、process_data.py---用于对训练数据集与微调数据集进行处理（选择性搜索、数据存取等）  
+5、train_and_test.py---用于各类模型的训练与测试、主函数  
+6、selectivesearch.py---选择性搜索源码  
 
 ## 基本知识介绍
 ### 1,计算机视觉中的不同任务
