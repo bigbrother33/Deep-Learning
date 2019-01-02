@@ -67,7 +67,7 @@ d、利用边框回归修正回归框
 * multi-scale combinatorial grouping
 * Ciresan   
 
-R-CNN 采用的是 Selective Search 算法。这样我们便得到若干个`region proposals`,即候选框（注：原论文中生成2000个） 
+R-CNN 采用的是 Selective Search 算法。首先通过简单的区域划分算法，将图片划分成很多小区域，再通过相似度（基于RGB,HSV等颜色空间）和区域大小（小的区域先聚合，这样是防止大的区域不断的聚合小区域，导致层次关系不完全）不断的聚合相邻小区域，类似于聚类的思路。这样我们便得到若干个`region proposals`,即候选框（注：原论文中生成2000个） 
 `selective search模块`
 ```Python
 import skimage.io
@@ -493,7 +493,7 @@ class Alexnet_Net :
 #### 3,fine-tuning阶段
 我们接着采用selective search 搜索出来的候选框。首先会逐步读入图片，然后采用seletive search 对读入的图片生成候选区域，再计算每个候选区域和ground truth(代码中的fine_turn_list)的交并比（IOU).当IOU大于阈值时，则认为是当前的候选区域属于正确类。并且将其标定为相应的类别(label)。这样每一个候选区域就会产生相应的label即（image, label). (image, label)就是Fineturn训练的训练集。然后处理到指定大小图片，继续对上面预训练的cnn模型进行fine-tuning训练。假设要检测的物体类别有N类，那么我们就需要把上面预训练阶段的CNN模型的最后一层给替换掉，替换成N+1个输出的神经元(加1，表示还有一个背景)，然后这一层直接采用参数随机初始化的方法，其它网络层的参数不变；接着就可以开始继续SGD训练了。开始的时候，SGD学习率选择0.001，在每次训练的时候，我们batch size大小选择128，其中32个事正样本、96个事负样本（正负样本的定义前面已经提过，不再解释）。
 ### SVM训练
-首先会逐步读入图片，然后采用seletive search 对读入的图片生成候选区域，这时候会生成候选区域候选框的坐标信息， 再计算每个候选区域和ground truth(代码中的fine_turn_list)的交并比（IOU).当IOU大于阈值时，则认为是当前的候选区域属于正确类。并且将其标定为相应的类别(label)， 并将这个label对应的候选区域图（iamge）的候选框坐标信息与ground truth的位置信息作对比，保留相对位置(平移和缩放)信息保留下来（label_bbox），作为训练数据。这样整个训练数据则为（image, label, label_bbox）对。但是在训练SVM时并没有用到label_bbox信息。还只是用来分类。而且需要对每种类型都单独训练一个分类器， 并保存训练好的模型，备用。另外SVM分类器的输入是Alex网络softmax链接层之前的全连接层的输出结果。
+首先会逐步读入图片，然后采用seletive search 对读入的图片生成候选区域，这时候会生成候选区域候选框的坐标信息， 再计算每个候选区域和ground truth(代码中的fine_turn_list)的交并比（IOU).当IOU大于阈值时，则认为是当前的候选区域属于正确类。并且将其标定为相应的类别(label)， 并将这个label对应的候选区域图（image）的候选框坐标信息与ground truth的位置信息作对比，保留相对位置(平移和缩放)信息保留下来（label_bbox），作为训练数据。这样整个训练数据则为（image, label, label_bbox）对。但是在训练SVM时并没有用到label_bbox信息，还只是用来分类。而且需要对每种类型都单独训练一个分类器， 并保存训练好的模型，备用。另外SVM分类器的输入是Alex网络softmax链接层之前的全连接层的输出结果。
 ```Python
 class SVM :
     def __init__(self, data):
@@ -555,7 +555,7 @@ class Reg_Net(object):
         return op
 ```
 ### 测试
-读入测试图片，生成候选框，用SVM判断类别，如果不是背景，用Reg_box生成平移缩放值， 然后对生成的候选区域进行调整。最后取所有候选区域调整后的结果的平均值作为最终的标定框。
+读入测试图片，生成候选框，用SVM判断类别，如果不是背景，用Reg_box生成平移缩放值， 然后对生成的候选区域进行调整。最后针对每个类，通过计算 IoU 指标，采取非极大性抑制`NMS`，以最高分的区域为基础，剔除掉那些重叠位置的区域。
 ```Python
 if __name__ =='__main__':
     
