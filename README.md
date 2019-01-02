@@ -50,7 +50,7 @@ b、利用CNN提取特征向量；
 
 c、利用SVM进行特征向量分类；    
 
-d、利用边框回归修正回归框
+d、利用边框回归修正候选框,NMS剔除多余的候选框
 
 具体的流程如下图片所示：
 ![](https://github.com/bigbrother33/Deep-Learning/blob/master/photo/20160902124834270.png)
