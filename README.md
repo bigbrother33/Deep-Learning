@@ -173,3 +173,102 @@ class SVM :
             joblib.dump(clf, os.path.join(SVM_model_path,  str(data_dir)+ '_svm.pkl'))
 ```
 ### bbox regression网络训练
+候选的bbox，与gt的bbox的IoU大于阈值，这个bbox才会作为正类。对于N各类别。训练N个不同的bbox regression。给定一个bbox的中心和长宽，以及cnn学习出来的pool5后的特征，学习gt bbox的中心还有长宽。目标函数:  
+<a href="https://www.codecogs.com/eqnedit.php?latex=\dpi{80}&space;\huge&space;Loss&space;=&space;\sum_i^N(t_*^i&space;-&space;\hat&space;w_*^T\phi_5(P^i))^2" target="_blank"><img src="https://latex.codecogs.com/gif.latex?\dpi{80}&space;\huge&space;Loss&space;=&space;\sum_i^N(t_*^i&space;-&space;\hat&space;w_*^T\phi_5(P^i))^2" title="\huge Loss = \sum_i^N(t_*^i - \hat w_*^T\phi_5(P^i))^2" /></a>  
+`w`即为要学习的参数，利用梯度下降法或者最小二乘法就可以得到。
+```Python
+class Reg_Net(object):
+    def __init__(self, is_training=True):
+        self.output_num = cfg.R_class_num
+        self.input_data = tf.placeholder(tf.float32, [None, 4096], name='input')
+        self.logits = self.build_network(self.input_data, self.output_num, is_training=is_training)
+        if is_training:
+            self.label = tf.placeholder(tf.float32, [None, self.output_num], name='input')
+            self.loss_layer(self.logits, self.label)
+            self.total_loss = tf.losses.get_total_loss()
+            tf.summary.scalar('total_loss', self.total_loss)
+
+    def build_network(self, input_image, output_num, is_training= True, scope='regression_box', keep_prob=0.5):
+        with tf.variable_scope(scope):
+            with slim.arg_scope([slim.fully_connected],
+                                activation_fn=self.tanh(),
+                                weights_initializer=tf.truncated_normal_initializer(0.0, 0.01),
+                                weights_regularizer=slim.l2_regularizer(0.0005)):
+                net = slim.fully_connected(input_image, 4096, scope='fc_1')
+                net = slim.dropout(net, keep_prob=keep_prob, is_training=is_training, scope='dropout11')
+                net = slim.fully_connected(net, output_num, scope='fc_2')
+                return net
+
+    def loss_layer(self,y_pred, y_true):
+        no_object_loss = tf.reduce_mean(tf.square((1 - y_true[:, 0]) * y_pred[:, 0]))
+        object_loss = tf.reduce_mean(tf.square((y_true[:, 0]) * (y_pred[:, 0] - 1)))
+
+        loss = (tf.reduce_mean(y_true[:, 0] * (
+                 tf.reduce_sum(tf.square(y_true[:, 1:5] - y_pred[:, 1:5]), 1))) + no_object_loss + object_loss)
+        tf.losses.add_loss(loss)
+        tf.summary.scalar('loss', loss)
+
+    def tanh(self):
+        def op(inputs):
+            return tf.tanh(inputs)
+        return op
+```
+### 测试
+读入测试图片，生成候选框，用SVM判断类别，如果不是背景，用Reg_box生成平移缩放值， 然后对生成的候选区域进行调整。最后取所有候选区域调整后的结果的平均值作为最终的标定框。
+```Python
+if __name__ =='__main__':
+    
+    Features_solver, svms, Reg_box_solver =get_Solvers()
+
+    img_path = './2flowers/jpg/1/image_1283.jpg'  # or './17flowers/jpg/16/****.jpg'
+    imgs, verts = process_data.image_proposal(img_path)
+    process_data.show_rect(img_path, verts, ' ')
+    features = Features_solver.predict(imgs)
+    print(np.shape(features))
+
+    results = []
+    results_old = []
+    results_label = []
+    count = 0
+    for f in features:
+        for svm in svms:
+            pred = svm.predict([f.tolist()])
+            # not background
+            if pred[0] != 0:
+                results_old.append(verts[count])
+                #print(Reg_box_solver.predict([f.tolist()]))
+                if Reg_box_solver.predict([f.tolist()])[0][0] > 0.5:
+                    px, py, pw, ph = verts[count][0], verts[count][1], verts[count][2], verts[count][3]
+                    old_center_x, old_center_y = px + pw / 2.0, py + ph / 2.0
+                    x_ping, y_ping, w_suo, h_suo = Reg_box_solver.predict([f.tolist()])[0][1], \
+                                                   Reg_box_solver.predict([f.tolist()])[0][2], \
+                                                   Reg_box_solver.predict([f.tolist()])[0][3], \
+                                                   Reg_box_solver.predict([f.tolist()])[0][4]
+                    new__center_x = x_ping * pw + old_center_x
+                    new__center_y = y_ping * ph + old_center_y
+                    new_w = pw * np.exp(w_suo)
+                    new_h = ph * np.exp(h_suo)
+                    new_verts = [new__center_x, new__center_y, new_w, new_h]
+                    results.append(new_verts)
+                    results_label.append(pred[0])
+        count += 1
+
+    average_center_x, average_center_y, average_w,average_h = 0, 0, 0, 0
+    #给预测出的所有的预测框区一个平均值，代表其预测出的最终位置
+    for vert in results:
+        average_center_x += vert[0]
+        average_center_y += vert[1]
+        average_w += vert[2]
+        average_h += vert[3]
+    average_center_x = average_center_x / len(results)
+    average_center_y = average_center_y / len(results)
+    average_w = average_w / len(results)
+    average_h = average_h / len(results)
+    average_result = [[average_center_x, average_center_y, average_w, average_h]]
+    result_label = max(results_label, key=results_label.count)
+    process_data.show_rect(img_path, results_old,' ')
+    process_data.show_rect(img_path, average_result,flower[result_label])
+```
+测试结果如下： 
+
+![](https://github.com/bigbrother33/Deep-Learning/blob/master/photo/1.PNG)  ![](https://github.com/bigbrother33/Deep-Learning/blob/master/photo/2.PNG)  ![](https://github.com/bigbrother33/Deep-Learning/blob/master/photo/3.PNG)  
